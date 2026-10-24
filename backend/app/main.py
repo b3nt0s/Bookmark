@@ -1,3 +1,9 @@
+import base64
+import json
+import secrets
+import time
+import urllib.parse
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -5,10 +11,17 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from .config import ALLOWED_ORIGINS, MAX_UPLOAD_BYTES, SITE_DIR
+from .config import (
+    ALLOWED_ORIGINS,
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
+    GOOGLE_REDIRECT_URI,
+    MAX_UPLOAD_BYTES,
+    SITE_DIR,
+)
 from .errors import AppError, BadRequest
 from .images import prepare_image
 from .ocr import extract_text
@@ -57,6 +70,133 @@ def resolve_time_context(timezone: str | None, reference_datetime: str | None) -
     else:
         ref = datetime.now(tz)
     return ref, tz.key
+
+
+def _decode_jwt_payload(token: str) -> dict:
+    payload_segment = token.split(".", 2)[1]
+    padded = payload_segment + "=" * (-len(payload_segment) % 4)
+    return json.loads(base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8"))
+
+
+@app.get("/api/auth/google/config")
+def google_auth_config():
+    return {
+        "clientId": GOOGLE_CLIENT_ID,
+        "redirectUri": GOOGLE_REDIRECT_URI,
+        "enabled": bool(GOOGLE_CLIENT_ID and GOOGLE_REDIRECT_URI),
+    }
+
+
+@app.get("/api/auth/google/login")
+def google_login():
+    if not GOOGLE_CLIENT_ID or not GOOGLE_REDIRECT_URI:
+        raise BadRequest("GOOGLE_OAUTH_NOT_CONFIGURED", "Google OAuth is not configured in the environment.")
+
+    state = secrets.token_urlsafe(32)
+    params = urllib.parse.urlencode(
+        {
+            "client_id": GOOGLE_CLIENT_ID,
+            "redirect_uri": GOOGLE_REDIRECT_URI,
+            "response_type": "code",
+            "scope": "openid email profile",
+            "access_type": "online",
+            "prompt": "select_account",
+            "state": state,
+        }
+    )
+    response = RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
+    response.set_cookie("google_oauth_state", state, httponly=True, samesite="lax")
+    return response
+
+
+@app.get("/api/auth/google/callback")
+def google_callback(request: Request, code: str | None = None, state: str | None = None, error: str | None = None):
+    if error:
+        raise BadRequest("GOOGLE_AUTH_ERROR", f"Google login failed: {error}.")
+    if not code:
+        raise BadRequest("MISSING_AUTH_CODE", "Google OAuth did not return an authorization code.")
+
+    cookie_state = request.cookies.get("google_oauth_state")
+    if state and cookie_state and state != cookie_state:
+        raise BadRequest("INVALID_STATE", "The Google OAuth state value did not match the request.")
+
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not GOOGLE_REDIRECT_URI:
+        raise BadRequest("GOOGLE_OAUTH_NOT_CONFIGURED", "Google OAuth credentials are not fully configured.")
+
+    token_payload = urllib.parse.urlencode(
+        {
+            "code": code,
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "redirect_uri": GOOGLE_REDIRECT_URI,
+            "grant_type": "authorization_code",
+        }
+    ).encode("utf-8")
+    token_request = urllib.request.Request(
+        "https://oauth2.googleapis.com/token",
+        data=token_payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urllib.request.urlopen(token_request, timeout=15) as resp:
+        token_response = json.loads(resp.read().decode("utf-8"))
+
+    access_token = token_response.get("access_token")
+    if not access_token:
+        raise BadRequest("TOKEN_EXCHANGE_FAILED", "Google did not return an access token.")
+
+    user_request = urllib.request.Request(
+        "https://openidconnect.googleapis.com/v1/userinfo",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    with urllib.request.urlopen(user_request, timeout=15) as resp:
+        profile = json.loads(resp.read().decode("utf-8"))
+
+    return JSONResponse(
+        {
+            "authenticated": True,
+            "user": {
+                "email": profile.get("email"),
+                "name": profile.get("name") or profile.get("email") or "Google user",
+                "picture": profile.get("picture"),
+                "googleUserId": profile.get("sub"),
+            },
+        }
+    )
+
+
+@app.post("/api/auth/google/session")
+def google_session(payload: dict):
+    credential = payload.get("credential")
+    if not credential:
+        raise BadRequest("MISSING_CREDENTIAL", "Google credential is missing.")
+
+    try:
+        header_segment, body_segment, _ = credential.split(".", 2)
+    except ValueError:
+        raise BadRequest("BAD_CREDENTIAL", "Google credential is malformed.")
+
+    if not header_segment or not body_segment:
+        raise BadRequest("BAD_CREDENTIAL", "Google credential is malformed.")
+
+    claims = _decode_jwt_payload(credential)
+    now = int(time.time())
+
+    if claims.get("aud") != GOOGLE_CLIENT_ID:
+        raise BadRequest("INVALID_CREDENTIAL", "The Google credential audience does not match this app.")
+    if claims.get("exp", 0) < now:
+        raise BadRequest("EXPIRED_CREDENTIAL", "The Google credential has expired.")
+    if claims.get("iss") not in {"accounts.google.com", "https://accounts.google.com"}:
+        raise BadRequest("INVALID_CREDENTIAL", "The Google credential issuer is not valid.")
+
+    return {
+        "authenticated": True,
+        "user": {
+            "email": claims.get("email"),
+            "name": claims.get("name") or claims.get("email") or "Google user",
+            "picture": claims.get("picture"),
+            "googleUserId": claims.get("sub"),
+        },
+    }
 
 
 # Plain `def` (not async): FastAPI runs it in a worker thread, so the blocking
