@@ -1,0 +1,17 @@
+{
+  "full_text": "PoCSC Presents:\nThe People of Color\nSustainability Collective\nProfessional\nDevelopment Symposium\nDate\nOctober 28th 2026\nRSVP HERE\nTime and\nPlace\n5:00pm to 7:30pm at\nthe University Center, in\nthe Alumni Room\nDo you want a career in environmental work?\nJoin us at the PoCSC Symposium for a\nlight dinner and networking opportunities\nwithin environmental professions. Learn how\nthese BIPOC owned businesses and local\norganizations can be stepping stones in your\nearly career.\nFor questions and\naccomodations email\npocsc@ucsc.edu\nYOU BELONG HERE",
+  "key_facts": {
+    "title": "The People of Color Sustainability Collective Professional Development Symposium",
+    "date": "October 28th 2026",
+    "time": "5:00pm to 7:30pm",
+    "location": "the University Center, in the Alumni Room",
+    "other": [
+      "Presented by PoCSC",
+      "RSVP via QR code (RSVP HERE)",
+      "Light dinner and networking opportunities",
+      "For questions and accomodations email pocsc@ucsc.edu"
+    ]
+  },
+  "difficulty": "Stylized handwriting-style font on lined-paper background; photo taken through glass with reflections and tape; QR codes and decorative graphics (star, worm, globe); small print in the 'You Belong Here' badge and logo (not included in full_text, see notes); 'accomodations' is misspelled on the flyer and must stay as printed.",
+  "notes": "Ground truth leaves out the circular logo text ('People of Color Sustainability Collective') and the tiny badge text ('This opportunity is open to all.' plus an illegible bottom line), and the QR codes at top-left."
+}

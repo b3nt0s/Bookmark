@@ -1,0 +1,18 @@
+{
+  "full_text": "ONE\nNIGHT\nONLY: A\nFACULTY\nRECITAL\n(left to right) Michael McGushin, Luke Shepherd, Emily Sinclair, Greg Fritsch, and\nSheila Willey perform art songs, arias, and selections from musical theater.\nOCTOBER 24, 2026\nMusic Center Recital Hall\nUC Santa Cruz\nConcert starts at 7:30 PM\nTickets & Info\nProceeds go\nto support\nUCSC Opera!\nFREE for\nUCSC students!\nUC SANTA CRUZ | Arts Music",
+  "key_facts": {
+    "title": "ONE NIGHT ONLY: A FACULTY RECITAL",
+    "date": "OCTOBER 24, 2026",
+    "time": "Concert starts at 7:30 PM",
+    "location": "Music Center Recital Hall UC Santa Cruz",
+    "other": [
+      "Performers: Michael McGushin, Luke Shepherd, Emily Sinclair, Greg Fritsch, Sheila Willey",
+      "Art songs, arias, and selections from musical theater",
+      "Tickets & Info via QR code",
+      "Proceeds go to support UCSC Opera",
+      "FREE for UCSC students"
+    ]
+  },
+  "difficulty": "Title is white text on a dark blue block beside photos; light gray small caption text with low contrast; five portrait photos; neighboring flyer edges visible (top-left 'AIKIDO OF SANTA CRU...' belongs to another flyer and must not appear); staples cover part of 'students!'.",
+  "notes": "'UC SANTA CRUZ' is in a condensed font next to a logo, then 'Arts' and 'Music' label. The title is split across 5 lines on the flyer. Date is today (2026-10-24), which matters for date resolution later."
+}
