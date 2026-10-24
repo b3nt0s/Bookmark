@@ -3,5 +3,20 @@
   "status": 200,
   "text": "ONE\nNIGHT\nONLY: A\nFACULTY\nRECITAL\n\n(left to right) Michael McGushin, Luke Shepherd, Emily Sinclair, Greg Fritsch, and\nSheila Willey perform art songs, arias, and selections from musical theater.\n\nOCTOBER 24, 2026\nMusic Center Recital Hall\nUC Santa Cruz\nConcert starts at 7:30 PM\n\nTickets & Info\n\nProceeds go\nto support\nUCSC Opera!\n\nFREE for\nUCSC students!\n\nUC SANTA CRUZ | Arts Music",
   "model": "gemma-4-26b-a4b-it",
-  "processed_at": "2026-10-24T21:39:22.096347Z"
+  "processed_at": "2026-10-24T22:27:36.739415Z",
+  "events": [
+    {
+      "title": "ONE NIGHT ONLY: A FACULTY RECITAL",
+      "start": "2026-10-24T19:30:00-07:00",
+      "end": "2026-10-24T20:30:00-07:00",
+      "end_defaulted": true,
+      "location": "Music Center Recital Hall, UC Santa Cruz",
+      "description": "Performers: Michael McGushin, Luke Shepherd, Emily Sinclair, Greg Fritsch, and Sheila Willey. Performing art songs, arias, and selections from musical theater. Proceeds go to support UCSC Opera! FREE for UCSC students!",
+      "confidence": {
+        "date": "low",
+        "start": "high",
+        "location": "high"
+      }
+    }
+  ]
 }
