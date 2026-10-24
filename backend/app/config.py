@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR.parent / ".env")  # also accept a .env at the repo root (does not override)
 
 
 def _first_env(*keys: str) -> str | None:
@@ -37,6 +38,9 @@ SITE_DIR = Path(__file__).resolve().parents[2] / "frontend"
 MAX_IMAGE_SIDE = 1600
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_ATTEMPTS = 3
+# Gemma "thinks" before answering by default, which can take minutes on a plain transcription.
+THINKING_LEVEL = "MINIMAL"
+REQUEST_TIMEOUT_S = 60  # per model call; a hung call fails instead of hanging the user
 RETRY_BASE_DELAY_S = 2.0
 
 # Pillow format names we accept. HEIF is iPhone photos; MPO is a JPEG variant some phones write.

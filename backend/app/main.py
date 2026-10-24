@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import ssl
 import time
@@ -17,6 +18,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.formparsers import MultiPartParser
 
 from .config import (
     AFTER_LOGIN_PATH,
@@ -31,6 +33,13 @@ from .config import (
 from .errors import AppError, BadRequest
 from .images import prepare_image
 from .ocr import extract_text
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("bookmark")
+
+# Starlette keeps uploads over 1MB in a temp file on disk. Raise the limit above our
+# max upload size so photos stay in memory and are never written to disk.
+MultiPartParser.spool_max_size = MAX_UPLOAD_BYTES + 1024 * 1024
 
 app = FastAPI(title="Bookmark")
 
@@ -268,18 +277,29 @@ def upload(
     reference_datetime: str | None = Form(None),
 ):
     # Everything stays in memory; nothing is written to disk.
-    data = file.file.read(MAX_UPLOAD_BYTES + 1)
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise BadRequest("FILE_TOO_LARGE", f"File is over the {MAX_UPLOAD_BYTES // (1024 * 1024)}MB limit.")
-    if not data:
-        raise BadRequest("EMPTY_FILE", "The uploaded file is empty.")
+    started = time.perf_counter()
+    outcome = "error"
+    size = 0
+    try:
+        data = file.file.read(MAX_UPLOAD_BYTES + 1)
+        size = len(data)
+        if size > MAX_UPLOAD_BYTES:
+            raise BadRequest("FILE_TOO_LARGE", f"File is over the {MAX_UPLOAD_BYTES // (1024 * 1024)}MB limit.")
+        if not data:
+            raise BadRequest("EMPTY_FILE", "The uploaded file is empty.")
 
-    reference, tz_name = resolve_time_context(timezone, reference_datetime)  # unused until parse_events
-    jpeg = prepare_image(data)
-    result = extract_text(jpeg)
+        reference, tz_name = resolve_time_context(timezone, reference_datetime)  # unused until parse_events
+        prepared_at = time.perf_counter()
+        jpeg = prepare_image(data)
+        prep_s = time.perf_counter() - prepared_at
+        result = extract_text(jpeg)
+        outcome = "ok"
+        log.info("upload ok: received %.0fKB, resized to %.0fKB in %.2fs", size / 1024, len(jpeg) / 1024, prep_s)
 
-    # Next step: events = parse_events(result["text"], jpeg, reference, tz_name)
-    return result
+        # Next step: events = parse_events(result["text"], jpeg, reference, tz_name)
+        return result
+    finally:
+        log.info("upload %s: received %.0fKB, total %.1fs", outcome, size / 1024, time.perf_counter() - started)
 
 
 @app.get("/test")
