@@ -95,3 +95,14 @@ main { animation: page-in 0.5s ease-out backwards; }
 .notice-error { background: #fde8e6; color: #8a1c13; }
 .notice a { text-decoration: none; }
 #add-result a:hover { opacity: 0.85; }
+
+/* ---------- Dark mode (html.dark comes from theme.js) ---------- */
+html.dark .field-warn { outline-color: #f0b44c; background-color: #3a2f12 !important; }
+html.dark .field-hint { color: #f0c36d; }
+html.dark .notice-ok   { background: #12362a; color: #8fe0b8; }
+html.dark .notice-info { background: #162a4d; color: #a9c4ff; }
+html.dark .notice-warn { background: #3a2f12; color: #f0c36d; }
+html.dark .notice-error { background: #44201d; color: #ffb4ab; }
+html.dark .event-tab { background: #1c2438; color: #c3c8d8; border-color: #3b4560; }
+html.dark .event-tab:hover { background: #26304a; }
+html.dark .event-tab.active { background: #4d8dff; color: #08152e; border-color: #4d8dff; }
