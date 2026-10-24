@@ -10,10 +10,19 @@
     button { padding: 10px 16px; }
     img { max-width: 100%; margin-top: 8px; }
     pre { background: #f4f4f4; padding: 12px; overflow-x: auto; white-space: pre-wrap; }
+    .auth-row { display: flex; align-items: center; gap: 12px; margin: 16px 0; }
+    .user-pill { background: #eef3ff; border-radius: 999px; padding: 8px 12px; display: inline-flex; align-items: center; gap: 8px; }
+    .user-pill img { width: 24px; height: 24px; border-radius: 50%; margin: 0; }
   </style>
 </head>
 <body>
   <h1>Bookmark upload test</h1>
+
+  <div class="auth-row">
+    <button id="googleLoginBtn" type="button" hidden>Continue with Google</button>
+    <div id="authStatus" class="user-pill" hidden></div>
+  </div>
+
   <form id="form">
     <input type="file" id="file" name="file" accept="image/*,.heic,.heif" required>
     <br>
@@ -26,6 +35,70 @@
     const form = document.getElementById('form');
     const out = document.getElementById('out');
     const submit = document.getElementById('submit');
+    const googleLoginBtn = document.getElementById('googleLoginBtn');
+    const authStatus = document.getElementById('authStatus');
+
+    function setAuthState(user) {
+      if (!user) {
+        authStatus.hidden = true;
+        googleLoginBtn.hidden = false;
+        return;
+      }
+
+      googleLoginBtn.hidden = true;
+      authStatus.hidden = false;
+      authStatus.innerHTML = `
+        <img src="${user.picture || 'https://www.gstatic.com/images/branding/product/2x/google_g_24dp.png'}" alt="${user.name}">
+        <span>${user.name || user.email || 'Google user'}</span>
+      `;
+    }
+
+    async function initializeGoogleAuth() {
+      try {
+        const res = await fetch('/api/auth/google/config');
+        const config = await res.json();
+        if (!config.enabled || !config.clientId) {
+          out.textContent = 'Google OAuth is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_REDIRECT_URI in the backend .env file.';
+          return;
+        }
+
+        const script = document.createElement('script');
+        script.src = 'https://accounts.google.com/gsi/client';
+        script.async = true;
+        script.defer = true;
+        script.onload = () => {
+          google.accounts.id.initialize({
+            client_id: config.clientId,
+            callback: handleCredentialResponse,
+          });
+          google.accounts.id.prompt();
+          googleLoginBtn.hidden = false;
+          googleLoginBtn.addEventListener('click', () => google.accounts.id.prompt());
+        };
+        document.head.appendChild(script);
+      } catch (err) {
+        out.textContent = 'Google auth failed to load: ' + err.message;
+      }
+    }
+
+    async function handleCredentialResponse(response) {
+      try {
+        const res = await fetch('/api/auth/google/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ credential: response.credential }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error?.message || 'Google sign-in failed.');
+        }
+        setAuthState(data.user);
+        out.textContent = 'Google signed in successfully.\n' + JSON.stringify(data.user, null, 2);
+      } catch (err) {
+        setAuthState(null);
+        out.textContent = 'Google sign-in error: ' + err.message;
+      }
+    }
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -44,6 +117,9 @@
         submit.disabled = false;
       }
     });
+
+    initializeGoogleAuth();
+    setAuthState(null);
   </script>
 </body>
 </html>
