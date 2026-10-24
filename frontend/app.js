@@ -190,7 +190,7 @@ function wireDrawer(drawer) {
 
 function setTheme(dark) {
   document.documentElement.classList.toggle("dark", dark);
-  try { localStorage.setItem("theme", dark ? "dark" : "light"); } catch { /* storage blocked */ }
+  try { localStorage.setItem("colorTheme", dark ? "dark" : "light"); } catch { /* storage blocked */ }
   showThemeSwitch();
 }
 
@@ -235,6 +235,9 @@ function wireProfileMenu() {
   document.getElementById("sign-out").addEventListener("click", async () => {
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
     store.clear();
+    // Signing out returns the site to its light default.
+    try { localStorage.removeItem("colorTheme"); } catch { /* storage blocked */ }
+    document.documentElement.classList.remove("dark");
     go(PAGES.signIn);
   });
 }

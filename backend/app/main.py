@@ -338,5 +338,14 @@ def test_page():
     return FileResponse(Path(__file__).parent / "static" / "index.html")
 
 
+class SiteFiles(StaticFiles):
+    """The front end, sent with no-cache so browsers re-check it and pick up edits right away."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 # The Stitch screens, at /. Mounted last so the routes above take priority.
-app.mount("/", StaticFiles(directory=SITE_DIR, html=True), name="site")
+app.mount("/", SiteFiles(directory=SITE_DIR, html=True), name="site")
