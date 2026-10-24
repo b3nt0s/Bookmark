@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -6,6 +7,9 @@ load_dotenv()
 
 # Switch to "gemma-4-31b-it" here if the 26B model isn't accurate enough.
 MODEL = "gemma-4-26b-a4b-it"
+
+# Stitch screens in the repo's frontend/ folder, served at /.
+SITE_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
 MAX_IMAGE_SIDE = 1600
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024

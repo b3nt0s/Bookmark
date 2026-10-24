@@ -21,5 +21,6 @@ def local_ip() -> str:
 
 if __name__ == "__main__":
     print(f"\nOn this computer:  http://127.0.0.1:{PORT}")
-    print(f"On your phone:     http://{local_ip()}:{PORT}   (same Wi-Fi)\n")
+    print(f"On your phone:     http://{local_ip()}:{PORT}   (same Wi-Fi)")
+    print(f"Upload test page:  http://127.0.0.1:{PORT}/test\n")
     uvicorn.run("app.main:app", host="0.0.0.0", port=PORT)

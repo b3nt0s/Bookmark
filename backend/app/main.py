@@ -6,8 +6,9 @@ from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
-from .config import ALLOWED_ORIGINS, MAX_UPLOAD_BYTES
+from .config import ALLOWED_ORIGINS, MAX_UPLOAD_BYTES, SITE_DIR
 from .errors import AppError, BadRequest
 from .images import prepare_image
 from .ocr import extract_text
@@ -81,6 +82,10 @@ def upload(
     return result
 
 
-@app.get("/")
+@app.get("/test")
 def test_page():
     return FileResponse(Path(__file__).parent / "static" / "index.html")
+
+
+# The Stitch screens, at /. Mounted last so the routes above take priority.
+app.mount("/", StaticFiles(directory=SITE_DIR, html=True), name="site")
