@@ -1,6 +1,10 @@
 // Testing-phase glue for the Stitch screens: Google sign-in, page links, the uploaded flyer,
-// and the event the user confirms. No real OCR or Calendar calls yet; flyer and event state
-// lives in sessionStorage so it resets when the tab closes.
+// and the event the user confirms. The flyer is sent to the backend for OCR; no Calendar calls
+// yet. Flyer and event state lives in sessionStorage so it resets when the tab closes.
+
+// Backend base URL. Empty means same origin: the backend serves this site, and `npm run dev`
+// proxies /api to it. Set it (e.g. "https://api.example.com") if the front end is hosted apart.
+const API_BASE = "";
 
 const PAGES = {
   signIn: "/",
@@ -119,14 +123,46 @@ function readFlyer(file) {
   });
 }
 
+// Sends the photo to the backend. Resolves to { text } or { error: "message to show" }.
+async function extractFlyerText(file) {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("timezone", Intl.DateTimeFormat().resolvedOptions().timeZone);
+  body.append("reference_datetime", new Date().toISOString());
+  try {
+    const res = await fetch(`${API_BASE}/api/upload`, { method: "POST", body });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data.error?.message || `Upload failed (${res.status}).` };
+    return { text: data.text };
+  } catch {
+    return { error: "Couldn't reach the server. Check your connection and try again." };
+  }
+}
+
+function showScanStatus(title, detail, { failed = false } = {}) {
+  const banner = document.getElementById("processing-banner");
+  if (!banner) return;
+  banner.classList.remove("hidden");
+  banner.scrollIntoView({ behavior: "smooth", block: "center" }); // it sits below the fold on phones
+  const [titleEl, detailEl] = banner.querySelectorAll("span.font-title-md, span.font-body-sm");
+  titleEl.textContent = title;
+  detailEl.textContent = detail;
+  banner.querySelector(".animate-spin, .rounded-full")?.classList.toggle("animate-spin", !failed);
+}
+
 async function acceptFlyer(file) {
   if (!file) return;
-  document.getElementById("processing-banner")?.classList.remove("hidden");
-  const flyer = await readFlyer(file);
+  showScanStatus("Reading your flyer...", "Extracting the text. This can take a few seconds.");
+  const [flyer, ocr] = await Promise.all([readFlyer(file), extractFlyerText(file)]);
+  if (ocr.error) {
+    showScanStatus("Couldn't read that flyer", ocr.error, { failed: true });
+    document.getElementById("flyer-file-input").value = ""; // let the same file be picked again
+    return;
+  }
   store.clear();
-  if (!store.set("flyer", flyer)) store.set("flyer", { ...flyer, preview: null });
-  // Short pause so the "scanning" banner is visible, like the real OCR step will be.
-  setTimeout(() => go(PAGES.review), 1200);
+  const saved = { ...flyer, text: ocr.text };
+  if (!store.set("flyer", saved)) store.set("flyer", { ...saved, preview: null });
+  go(PAGES.review);
 }
 
 function setUpUploadPage() {
@@ -203,6 +239,9 @@ function setUpReviewPage() {
       if (original) original.href = dataUrlToBlobUrl(flyer.preview);
     }
   }
+
+  // No date or title parsing yet: show the flyer's extracted text in the description.
+  if (flyer?.text) fields.description.value = flyer.text;
 
   // Returning from the synced page with "Edit": restore what was entered.
   const saved = store.get("event");

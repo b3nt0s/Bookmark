@@ -17,9 +17,13 @@ OCR_PROMPT = """Transcribe ALL visible text on this event flyer exactly as writt
 
 Rules:
 - Read in natural order: the title first, then the details (date, time, place, price, etc.).
+- Where text sits in columns or side-by-side blocks, finish one block before starting the next. Never join lines from different blocks into one line.
+- Include small print, captions, and text in stylized, decorative, or handwritten fonts. Look closely at each letter shape.
 - Keep the original line breaks.
-- Transcribe verbatim. Do NOT correct spelling, fix grammar, reformat dates, or add anything that is not on the flyer.
-- If a piece of text is unreadable, write [unclear] in its place.
+- Transcribe verbatim: copy exactly what is printed, including odd spelling, capitalization, and punctuation. Do NOT correct, complete, or guess. Do not reformat dates or times. Do not add words that are not on the flyer.
+- Ignore text that belongs to neighboring flyers, posters, or objects around the flyer.
+- If a piece of text is unreadable, or you are not sure what it says, write [unclear] in its place instead of guessing.
+- Transcribe text only. Do not describe or label images, logos, photos, or QR codes.
 - Output only the transcription: no commentary, no markdown, no code fences."""
 
 log = logging.getLogger("bookmark")
