@@ -1,0 +1,118 @@
+/* Color tokens for the Stitch design, as "R G B" so Tailwind's /opacity modifiers still work.
+   Each page's tailwind.config points its colors here; html.dark swaps in the dark palette. */
+
+:root {
+  color-scheme: light;
+  --background: 250 248 255;
+  --on-background: 19 27 46;
+  --surface: 250 248 255;
+  --surface-dim: 210 217 244;
+  --surface-bright: 250 248 255;
+  --surface-container-lowest: 255 255 255;
+  --surface-container-low: 242 243 255;
+  --surface-container: 234 237 255;
+  --surface-container-high: 226 231 255;
+  --surface-container-highest: 218 226 253;
+  --surface-variant: 218 226 253;
+  --surface-tint: 0 91 192;
+  --on-surface: 19 27 46;
+  --on-surface-variant: 65 71 84;
+  --inverse-surface: 40 48 68;
+  --inverse-on-surface: 238 240 255;
+  --outline: 114 119 133;
+  --outline-variant: 193 198 214;
+
+  --primary: 0 91 191;
+  --on-primary: 255 255 255;
+  --primary-container: 26 115 232;
+  --on-primary-container: 255 255 255;
+  --inverse-primary: 173 199 255;
+  --primary-fixed: 216 226 255;
+  --primary-fixed-dim: 173 199 255;
+  --on-primary-fixed: 0 26 65;
+  --on-primary-fixed-variant: 0 68 147;
+
+  --secondary: 0 108 73;
+  --on-secondary: 255 255 255;
+  --secondary-container: 108 248 187;
+  --on-secondary-container: 0 113 77;
+  --secondary-fixed: 111 251 190;
+  --secondary-fixed-dim: 78 222 163;
+  --on-secondary-fixed: 0 33 19;
+  --on-secondary-fixed-variant: 0 82 54;
+
+  --tertiary: 132 83 0;
+  --on-tertiary: 255 255 255;
+  --tertiary-container: 166 105 0;
+  --on-tertiary-container: 255 255 255;
+  --tertiary-fixed: 255 221 184;
+  --tertiary-fixed-dim: 255 185 95;
+  --on-tertiary-fixed: 42 23 0;
+  --on-tertiary-fixed-variant: 101 62 0;
+
+  --error: 186 26 26;
+  --on-error: 255 255 255;
+  --error-container: 255 218 214;
+  --on-error-container: 147 0 10;
+}
+
+html.dark {
+  color-scheme: dark;
+  --background: 15 19 28;
+  --on-background: 223 226 239;
+  --surface: 15 19 28;
+  --surface-dim: 15 19 28;
+  --surface-bright: 53 57 67;
+  --surface-container-lowest: 10 14 23;
+  --surface-container-low: 23 27 37;
+  --surface-container: 27 31 41;
+  --surface-container-high: 38 42 52;
+  --surface-container-highest: 49 53 63;
+  --surface-variant: 65 71 84;
+  --surface-tint: 173 199 255;
+  --on-surface: 223 226 239;
+  --on-surface-variant: 193 198 214;
+  --inverse-surface: 223 226 239;
+  --inverse-on-surface: 44 48 58;
+  --outline: 139 144 160;
+  --outline-variant: 65 71 84;
+
+  --primary: 173 199 255;
+  --on-primary: 0 46 105;
+  --primary-container: 26 115 232;
+  --on-primary-container: 255 255 255;
+  --inverse-primary: 0 91 191;
+  --primary-fixed: 0 68 147;
+  --primary-fixed-dim: 0 46 105;
+  --on-primary-fixed: 216 226 255;
+  --on-primary-fixed-variant: 173 199 255;
+
+  --secondary: 78 222 163;
+  --on-secondary: 0 56 36;
+  --secondary-container: 0 82 54;
+  --on-secondary-container: 111 251 190;
+  --secondary-fixed: 0 82 54;
+  --secondary-fixed-dim: 78 222 163;
+  --on-secondary-fixed: 111 251 190;
+  --on-secondary-fixed-variant: 111 251 190;
+
+  --tertiary: 255 185 95;
+  --on-tertiary: 71 42 0;
+  --tertiary-container: 166 105 0;
+  --on-tertiary-container: 255 255 255;
+  --tertiary-fixed: 101 62 0;
+  --tertiary-fixed-dim: 255 185 95;
+  --on-tertiary-fixed: 255 221 184;
+  --on-tertiary-fixed-variant: 255 221 184;
+
+  --error: 255 180 171;
+  --on-error: 105 0 5;
+  --error-container: 147 0 10;
+  --on-error-container: 255 218 214;
+}
+
+/* Date and time pickers draw their own icons; keep them visible on dark fields. */
+html.dark input[type="date"]::-webkit-calendar-picker-indicator,
+html.dark input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}
