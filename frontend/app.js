@@ -40,8 +40,7 @@ const store = {
     try { sessionStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; }
   },
   clear() {
-    sessionStorage.removeItem("flyer");
-    sessionStorage.removeItem("event");
+    for (const key of ["flyer", "event", "events", "reviewState"]) sessionStorage.removeItem(key);
   },
 };
 
@@ -313,7 +312,7 @@ function readFlyer(file) {
   });
 }
 
-// Sends the photo to the backend. Resolves to { text } or { error: "message to show" }.
+// Sends the photo to the backend. Resolves to { text, events, parseError } or { error: "message to show" }.
 async function extractFlyerText(file) {
   const body = new FormData();
   body.append("file", file);
@@ -323,7 +322,7 @@ async function extractFlyerText(file) {
     const res = await fetch(`${API_BASE}/api/upload`, { method: "POST", body });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { error: data.error?.message || `Upload failed (${res.status}).` };
-    return { text: data.text };
+    return { text: data.text, events: data.events || [], parseError: data.parse_error || null };
   } catch {
     return { error: "Couldn't reach the server. Check your connection and try again." };
   }
@@ -342,7 +341,7 @@ function showScanStatus(title, detail, { failed = false } = {}) {
 
 async function acceptFlyer(file) {
   if (!file) return;
-  showScanStatus("Reading your flyer...", "Extracting the text. This can take a few seconds.");
+  showScanStatus("Reading your flyer...", "Finding the title, date, time and place. This takes about 10 seconds.");
   const [flyer, ocr] = await Promise.all([readFlyer(file), extractFlyerText(file)]);
   if (ocr.error) {
     showScanStatus("Couldn't read that flyer", ocr.error, { failed: true });
@@ -350,7 +349,7 @@ async function acceptFlyer(file) {
     return;
   }
   store.clear();
-  const saved = { ...flyer, text: ocr.text };
+  const saved = { ...flyer, text: ocr.text, events: ocr.events, parseError: ocr.parseError };
   if (!store.set("flyer", saved)) store.set("flyer", { ...saved, preview: null });
   go(PAGES.review);
 }
@@ -411,35 +410,189 @@ function reviewFields() {
   };
 }
 
+// "2026-10-28T17:00:00-07:00" -> ["2026-10-28", "17:00"]. A date with no time gives ["2026-10-28", ""].
+function splitIso(iso) {
+  const m = (iso || "").match(/^(\d{4}-\d{2}-\d{2})(?:T(\d{2}:\d{2}))?/);
+  return m ? [m[1], m[2] || ""] : ["", ""];
+}
+
+// One event from the backend -> the editable state for the form, plus which fields to flag.
+function eventToState(ev) {
+  const [startDate, startTime] = splitIso(ev.start);
+  const [endDate, endTime] = splitIso(ev.end);
+  const conf = ev.confidence || {};
+  return {
+    title: ev.title || "",
+    allDay: Boolean(startDate) && !startTime,
+    startDate, startTime,
+    endDate: endDate || startDate,
+    endTime,
+    location: ev.location || "",
+    description: ev.description || "",
+    reminder: "1h",
+    include: true,
+    // true = flag this group of fields for the user to check
+    warn: {
+      title: !ev.title,
+      start: !startDate || conf.start !== "high",
+      end: Boolean(ev.end_defaulted),
+      location: !ev.location || conf.location !== "high",
+    },
+  };
+}
+
+function blankState(description = "") {
+  return { ...eventToState({}), description };
+}
+
 function setUpReviewPage() {
   const flyer = store.get("flyer");
+  if (!flyer) return go(PAGES.upload); // nothing uploaded yet
   const fields = reviewFields();
+  const form = document.getElementById("event-editor-form");
 
-  if (flyer) {
-    const nameEl = byText("spring-summit-2025.jpg", "p");
-    if (nameEl) {
-      nameEl.textContent = flyer.name;
-      nameEl.nextElementSibling.textContent = flyer.width
-        ? `${formatSize(flyer.size)} • ${flyer.width} × ${flyer.height}px`
-        : `${formatSize(flyer.size)} • preview not available for this file type`;
-    }
-    if (flyer.preview) {
-      document.getElementById("scanned-image").src = flyer.preview;
-      const original = byText("View original", "a");
-      if (original) original.href = dataUrlToBlobUrl(flyer.preview);
-    }
+  // ----- Source flyer panel
+  const nameEl = byText("spring-summit-2025.jpg", "p");
+  if (nameEl) {
+    nameEl.textContent = flyer.name;
+    nameEl.nextElementSibling.textContent = flyer.width
+      ? `${formatSize(flyer.size)} • ${flyer.width} × ${flyer.height}px`
+      : `${formatSize(flyer.size)} • preview not available for this file type`;
+  }
+  const original = byText("View original", "a");
+  if (flyer.preview) {
+    document.getElementById("scanned-image").src = flyer.preview;
+    if (original) original.href = dataUrlToBlobUrl(flyer.preview);
+  } else {
+    // No preview (for example HEIC, which most browsers can't draw): say so instead of a broken image.
+    const img = document.getElementById("scanned-image");
+    img.classList.add("hidden");
+    img.parentElement.insertAdjacentHTML("beforeend", '<div class="absolute inset-0 flex items-center justify-center p-space-md text-center font-body-sm text-body-sm text-on-surface-variant">Preview not available for this file type</div>');
+    original?.classList.add("hidden");
   }
 
-  // No date or title parsing yet: show the flyer's extracted text in the description.
-  if (flyer?.text) fields.description.value = flyer.text;
+  // ----- The events: returning from the synced page restores the user's edits
+  const restored = store.get("reviewState");
+  let states, active = 0;
+  if (restored) {
+    ({ events: states, active } = restored);
+  } else if (flyer.events?.length) {
+    states = flyer.events.map(eventToState);
+  } else {
+    states = [blankState(flyer.text || "")]; // nothing parsed: keep the raw text for the user
+  }
 
-  // Returning from the synced page with "Edit": restore what was entered.
-  const saved = store.get("event");
-  if (saved) {
-    for (const key of ["title", "startDate", "startTime", "endDate", "endTime", "location", "description", "reminder"]) {
-      if (fields[key] && saved[key] != null) fields[key].value = saved[key];
+  // ----- Notice at the top of the form
+  const notice = document.createElement("div");
+  notice.id = "extract-notice";
+  form.firstElementChild.after(notice);
+  function showNotice() {
+    let kind = "info", text;
+    if (flyer.parseError || !flyer.events?.length) {
+      kind = "warn";
+      text = flyer.parseError
+        ? `We read your flyer but couldn't pick out the event details. ${flyer.parseError} The flyer's text is in Description, so you can fill in the rest below.`
+        : "We read your flyer but couldn't find an event in it. The flyer's text is in Description. Fill in the details below.";
+    } else {
+      const flagged = states.some((st) => Object.values(st.warn).some(Boolean));
+      const many = states.length > 1 ? `Found ${states.length} events on this flyer. ` : "";
+      text = many + (flagged ? "Highlighted fields need a quick check against the flyer." : "Everything was read clearly. Take a quick look before adding it.");
+      kind = flagged ? "warn" : "ok";
     }
-    fields.allDay.checked = saved.allDay;
+    notice.className = `notice notice-${kind}`;
+    notice.textContent = text;
+  }
+
+  // ----- Tabs, one per event (only shown when there is more than one)
+  const tabs = document.createElement("div");
+  tabs.id = "event-tabs";
+  notice.after(tabs);
+  const includeRow = document.createElement("label");
+  includeRow.className = "flex items-center gap-space-xs cursor-pointer font-body-sm text-body-sm text-on-surface-variant";
+  includeRow.innerHTML = '<input type="checkbox" id="include-event" class="w-4 h-4 rounded accent-primary cursor-pointer"><span>Add this event to my calendar</span>';
+  tabs.after(includeRow);
+  const includeBox = includeRow.querySelector("input");
+
+  function renderTabs() {
+    const many = states.length > 1;
+    tabs.classList.toggle("hidden", !many);
+    includeRow.classList.toggle("hidden", !many);
+    tabs.replaceChildren(...states.map((st, i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "event-tab" + (i === active ? " active" : "") + (st.include ? "" : " excluded");
+      const flagged = Object.values(st.warn).some(Boolean);
+      b.textContent = `${i + 1}. ${st.title || "Untitled event"}`;
+      if (flagged) b.insertAdjacentHTML("beforeend", '<span class="tab-dot" title="Has fields to check"></span>');
+      b.addEventListener("click", () => show(i));
+      return b;
+    }));
+  }
+
+  // ----- Field highlighting
+  const hints = {};
+  function hintFor(group, anchor) {
+    if (!hints[group]) {
+      hints[group] = document.createElement("p");
+      hints[group].className = "field-hint";
+      anchor.after(hints[group]);
+    }
+    return hints[group];
+  }
+  const groupEls = {
+    title: [fields.title],
+    start: [fields.startDate, fields.startTime],
+    end: [fields.endDate, fields.endTime],
+    location: [fields.location],
+  };
+  function applyWarnings() {
+    const st = states[active];
+    for (const [group, els] of Object.entries(groupEls)) els.forEach((el) => el.classList.toggle("field-warn", st.warn[group]));
+    const messages = {
+      title: st.warn.title ? "No title found on the flyer. Add one." : "",
+      date: [
+        st.warn.start ? (st.startDate ? "Check this date and time against the flyer." : "No date found on the flyer. Pick one.") : "",
+        st.warn.end ? "No end time on the flyer, so it defaults to 1 hour. Adjust it if needed." : "",
+      ].filter(Boolean).join(" "),
+      location: st.warn.location ? (st.location ? "Check this location against the flyer." : "No location found on the flyer.") : "",
+    };
+    hintFor("title", fields.title).textContent = messages.title;
+    hintFor("date", fields.startDate.closest(".grid")).textContent = messages.date;
+    hintFor("location", fields.location.closest(".relative")).textContent = messages.location;
+  }
+
+  // ----- Form <-> state
+  function readForm() {
+    const st = states[active];
+    Object.assign(st, {
+      title: fields.title.value.trim(),
+      allDay: fields.allDay.checked,
+      startDate: fields.startDate.value, startTime: fields.startTime.value,
+      endDate: fields.endDate.value, endTime: fields.endTime.value,
+      location: fields.location.value.trim(),
+      description: fields.description.value.trim(),
+      reminder: fields.reminder.value,
+      include: includeBox.checked,
+    });
+  }
+  function fillForm() {
+    const st = states[active];
+    fields.title.value = st.title;
+    fields.allDay.checked = st.allDay;
+    fields.startDate.value = st.startDate; fields.startTime.value = st.startTime;
+    fields.endDate.value = st.endDate; fields.endTime.value = st.endTime;
+    fields.location.value = st.location;
+    fields.description.value = st.description;
+    fields.reminder.value = st.reminder;
+    includeBox.checked = st.include;
+    toggleTimes();
+    applyWarnings();
+    renderTabs();
+  }
+  function show(i) {
+    readForm();
+    active = i;
+    fillForm();
   }
 
   const toggleTimes = () => {
@@ -448,7 +601,18 @@ function setUpReviewPage() {
     fields.endTime.classList.toggle("opacity-40", fields.allDay.checked);
   };
   fields.allDay.addEventListener("change", toggleTimes);
-  toggleTimes();
+
+  // Editing a flagged field clears its flag.
+  for (const [group, els] of Object.entries(groupEls)) {
+    els.forEach((el) => el.addEventListener("input", () => {
+      states[active].warn[group] = false;
+      applyWarnings();
+      renderTabs();
+      showNotice();
+    }));
+  }
+  fields.title.addEventListener("input", () => { states[active].title = fields.title.value.trim(); renderTabs(); });
+  includeBox.addEventListener("change", () => { states[active].include = includeBox.checked; renderTabs(); });
 
   const maps = byText("Open Maps", "a");
   maps?.addEventListener("click", () => {
@@ -461,36 +625,48 @@ function setUpReviewPage() {
     go(PAGES.upload);
   });
 
-  const form = document.getElementById("event-editor-form");
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    if (fields.endDate.value < fields.startDate.value) {
-      fields.endDate.setCustomValidity("End date can't be before the start date.");
-      fields.endDate.reportValidity();
+    readForm();
+    const chosen = states.filter((st) => st.include);
+    if (!chosen.length) {
+      notice.className = "notice notice-warn";
+      notice.textContent = "Tick “Add this event to my calendar” on at least one event.";
       return;
     }
-    const event = {
-      id: saved?.id ?? (crypto.randomUUID?.() ?? String(Date.now())),
-      title: fields.title.value.trim(),
-      allDay: fields.allDay.checked,
-      startDate: fields.startDate.value,
-      startTime: fields.startTime.value,
-      endDate: fields.endDate.value,
-      endTime: fields.endTime.value,
-      location: fields.location.value.trim(),
-      description: fields.description.value.trim(),
-      reminder: fields.reminder.value,
-      flyerName: flyer?.name ?? null,
-      syncedAt: new Date().toISOString(),
-    };
-    store.set("event", event);
-    recent.upsert(event);
+    // Check every event we're about to add, not just the one on screen.
+    for (const st of chosen) {
+      const i = states.indexOf(st);
+      const problem = !st.title ? "title" : !st.startDate ? "startDate" : !st.allDay && !st.startTime ? "startTime" : st.endDate && st.endDate < st.startDate ? "endDate" : null;
+      if (!problem) continue;
+      if (i !== active) show(i);
+      const field = fields[problem];
+      field.setCustomValidity(problem === "endDate" ? "End date can't be before the start date." : "");
+      field.reportValidity();
+      field.addEventListener("input", () => field.setCustomValidity(""), { once: true });
+      return;
+    }
+    const syncedAt = new Date().toISOString();
+    for (const st of chosen) {
+      st.endDate ||= st.startDate;
+      if (!st.allDay) st.endTime ||= st.startTime; // no end time given: the event is a point in time
+      // A stable id (kept in reviewState) lets Recent Events update, not duplicate, on re-confirm.
+      st.id ||= crypto.randomUUID?.() ?? `${Date.now()}-${states.indexOf(st)}`;
+    }
+    store.set("reviewState", { events: states, active });
+    const events = chosen.map(({ warn, include, ...ev }) => ({ ...ev, flyerName: flyer.name ?? null, syncedAt }));
+    store.set("events", events);
+    store.set("event", events[0]);
+    // Upsert oldest-first so the first chosen event ends up at the top of the list.
+    [...events].reverse().forEach((ev) => recent.upsert(ev));
     const btn = document.getElementById("submit-sync-btn");
     btn.disabled = true;
     btn.querySelector("span:last-child").textContent = "Syncing with Google Calendar...";
     setTimeout(() => go(PAGES.synced), 900);
   });
-  fields.endDate.addEventListener("input", () => fields.endDate.setCustomValidity(""));
+
+  showNotice();
+  fillForm();
 }
 
 // ---------- Synced ----------
@@ -530,8 +706,13 @@ function icsEscape(text) {
   return text.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/[,;]/g, (c) => "\\" + c);
 }
 
-function buildIcs(ev) {
+function buildIcs(events) {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+/, "");
+  const vevents = events.map((ev, n) => buildVevent(ev, n, stamp));
+  return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Bookmark//Flyer to Calendar//EN", ...vevents.flat(), "END:VCALENDAR"].join("\r\n");
+}
+
+function buildVevent(ev, n, stamp) {
   let start, end;
   if (ev.allDay) {
     start = `DTSTART;VALUE=DATE:${compact(ev.startDate)}`;
@@ -541,16 +722,15 @@ function buildIcs(ev) {
     end = `DTEND:${compact(ev.endDate || ev.startDate, ev.endTime)}`;
   }
   const minutes = { "10m": 10, "30m": 30, "1h": 60, "1d": 1440 }[ev.reminder];
-  const lines = [
-    "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Bookmark//Flyer to Calendar//EN", "BEGIN:VEVENT",
-    `UID:${Date.now()}@bookmark.local`, `DTSTAMP:${stamp}`, start, end,
+  return [
+    "BEGIN:VEVENT",
+    `UID:${Date.now()}-${n}@bookmark.local`, `DTSTAMP:${stamp}`, start, end,
     `SUMMARY:${icsEscape(ev.title)}`,
     ev.location && `LOCATION:${icsEscape(ev.location)}`,
     ev.description && `DESCRIPTION:${icsEscape(ev.description)}`,
     minutes && ["BEGIN:VALARM", "ACTION:DISPLAY", `DESCRIPTION:${icsEscape(ev.title)}`, `TRIGGER:-PT${minutes}M`, "END:VALARM"],
-    "END:VEVENT", "END:VCALENDAR",
+    "END:VEVENT",
   ].flat().filter(Boolean);
-  return lines.join("\r\n");
 }
 
 function googleCalendarUrl(ev) {
@@ -564,11 +744,12 @@ function googleCalendarUrl(ev) {
   return "https://calendar.google.com/calendar/render?" + params;
 }
 
-function downloadIcs(event) {
-  const url = URL.createObjectURL(new Blob([buildIcs(event)], { type: "text/calendar" }));
+// One .ics file holding every event in `events`, named after the first.
+function downloadIcs(events) {
+  const url = URL.createObjectURL(new Blob([buildIcs(events)], { type: "text/calendar" }));
   const a = Object.assign(document.createElement("a"), {
     href: url,
-    download: (event.title || "event").replace(/[^\w-]+/g, "-").replace(/^-|-$/g, "").toLowerCase() + ".ics",
+    download: (events[0].title || "event").replace(/[^\w-]+/g, "-").replace(/^-|-$/g, "").toLowerCase() + ".ics",
   });
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -618,10 +799,12 @@ function setUpSyncedPage() {
   if (!event) return go(PAGES.upload);
 
   byText("Convert Another Flyer", "a")?.addEventListener("click", () => store.clear());
+  const events = store.get("events") ?? [event];
 
   const [dates, times] = describeWhen(event);
   const [venue, ...rest] = event.location.split(",");
-  document.getElementById("synced-title").textContent = event.title;
+  const extra = events.length - 1;
+  document.getElementById("synced-title").textContent = event.title + (extra ? ` (+${extra} more in the .ics file)` : "");
   document.getElementById("synced-dates").textContent = dates;
   document.getElementById("synced-times").textContent = times;
   document.getElementById("synced-venue").textContent = venue || "No location";
@@ -633,7 +816,7 @@ function setUpSyncedPage() {
 
   document.getElementById("quickDownloadIcs")?.addEventListener("click", (e) => {
     e.preventDefault();
-    downloadIcs(event);
+    downloadIcs(events);
   });
 
   const share = document.getElementById("quickShareInvite");
@@ -648,7 +831,8 @@ function setUpSyncedPage() {
 
   // Earlier events, not the one just added.
   accountReady.then(() => {
-    const others = recent.list().filter((e) => e.id !== event.id);
+    const justAdded = new Set(events.map((e) => e.id));
+    const others = recent.list().filter((e) => !justAdded.has(e.id));
     const section = document.getElementById("recent");
     if (!others.length) return section.classList.add("hidden");
     document.getElementById("recent-list").innerHTML = others.slice(0, 3).map(recentRow).join("");
@@ -713,7 +897,7 @@ async function setUpRecentPage() {
     const id = btn.closest("article").id;
     const ev = recent.list().find((x) => x.id === id);
     if (!ev) return;
-    if (btn.dataset.action === "ics") downloadIcs(ev);
+    if (btn.dataset.action === "ics") downloadIcs([ev]);
     if (btn.dataset.action === "remove") {
       recent.remove(id);
       render();

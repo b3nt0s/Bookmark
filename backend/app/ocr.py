@@ -67,10 +67,11 @@ def call_with_retry(fn):
             time.sleep(delay)
 
 
-def extract_text(jpeg_bytes: bytes) -> dict:
-    """Transcribe all text on a flyer. Expects JPEG bytes from images.prepare_image.
+def generate(jpeg_bytes: bytes, prompt: str, label: str, **config) -> str:
+    """One Gemma call with an image and a prompt. Returns the response text.
 
-    Returns {"text", "model", "processed_at"}.
+    Handles retries (429) and turns model failures into OcrError. `config` is passed to
+    GenerateContentConfig (e.g. response_schema for structured output).
     """
     client = get_client()
     started = time.perf_counter()
@@ -80,31 +81,40 @@ def extract_text(jpeg_bytes: bytes) -> dict:
                 model=MODEL,
                 contents=[
                     types.Part.from_bytes(data=jpeg_bytes, mime_type="image/jpeg"),
-                    OCR_PROMPT,
+                    prompt,
                 ],
                 config=types.GenerateContentConfig(
                     temperature=0,
                     thinking_config=types.ThinkingConfig(thinking_level=THINKING_LEVEL),
+                    **config,
                 ),
             )
         )
     except OcrError:
         raise
     except errors.APIError as e:
-        log.error("Gemma API error %s after %.1fs: %s", e.code, time.perf_counter() - started, str(e)[:500])
+        log.error("Gemma %s: API error %s after %.1fs: %s", label, e.code, time.perf_counter() - started, str(e)[:500])
         raise OcrError("GEMMA_ERROR", f"The model request failed ({e.code}). Try again.", 502) from e
     except httpx.TimeoutException as e:
-        log.error("Gemma call timed out after %.1fs", time.perf_counter() - started)
+        log.error("Gemma %s: timed out after %.1fs", label, time.perf_counter() - started)
         raise OcrError("GEMMA_TIMEOUT", "The model took too long to respond. Try again.", 504) from e
     except Exception as e:  # network problems, etc.
-        log.error("Gemma call failed after %.1fs: %s", time.perf_counter() - started, type(e).__name__)
+        log.error("Gemma %s: failed after %.1fs: %s", label, time.perf_counter() - started, type(e).__name__)
         raise OcrError("GEMMA_ERROR", "Could not reach the model. Try again.", 502) from e
 
-    log.info("Gemma call took %.1fs", time.perf_counter() - started)
+    log.info("Gemma %s took %.1fs", label, time.perf_counter() - started)
     text = (response.text or "").strip()
     if not text:
         raise OcrError("EMPTY_RESPONSE", "The model returned no text (the image may be blank or blocked).", 502)
+    return text
 
+
+def extract_text(jpeg_bytes: bytes) -> dict:
+    """Transcribe all text on a flyer. Expects JPEG bytes from images.prepare_image.
+
+    Returns {"text", "model", "processed_at"}.
+    """
+    text = generate(jpeg_bytes, OCR_PROMPT, "ocr")
     return {
         "text": text,
         "model": MODEL,

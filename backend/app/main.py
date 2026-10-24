@@ -32,6 +32,7 @@ from .config import (
 )
 from .errors import AppError, BadRequest
 from .images import prepare_image
+from .events import parse_events
 from .ocr import extract_text
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -288,7 +289,7 @@ def upload(
         if not data:
             raise BadRequest("EMPTY_FILE", "The uploaded file is empty.")
 
-        reference, tz_name = resolve_time_context(timezone, reference_datetime)  # unused until parse_events
+        reference, tz_name = resolve_time_context(timezone, reference_datetime)
         prepared_at = time.perf_counter()
         jpeg = prepare_image(data)
         prep_s = time.perf_counter() - prepared_at
@@ -296,7 +297,14 @@ def upload(
         outcome = "ok"
         log.info("upload ok: received %.0fKB, resized to %.0fKB in %.2fs", size / 1024, len(jpeg) / 1024, prep_s)
 
-        # Next step: events = parse_events(result["text"], jpeg, reference, tz_name)
+        # Second step: pull structured events out of the text. If it fails, still return the
+        # text so the user can fill the event in by hand.
+        try:
+            result["events"] = parse_events(result["text"], jpeg, reference, tz_name)
+        except AppError as e:
+            log.warning("parse_events failed: %s", e.message)
+            result["events"] = []
+            result["parse_error"] = e.message
         return result
     finally:
         log.info("upload %s: received %.0fKB, total %.1fs", outcome, size / 1024, time.perf_counter() - started)
