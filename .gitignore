@@ -1,0 +1,6 @@
+node_modules/
+.env
+*.ocr.json
+
+.venv/
+__pycache__/

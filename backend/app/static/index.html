@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bookmark upload test</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 0 auto; padding: 16px; }
+    button, input { font-size: 1rem; margin: 8px 0; }
+    button { padding: 10px 16px; }
+    img { max-width: 100%; margin-top: 8px; }
+    pre { background: #f4f4f4; padding: 12px; overflow-x: auto; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Bookmark upload test</h1>
+  <form id="form">
+    <input type="file" id="file" name="file" accept="image/*,.heic,.heif" required>
+    <br>
+    <button type="submit" id="submit">Upload</button>
+  </form>
+  <img id="preview" alt="">
+  <pre id="out">Choose a flyer photo and tap Upload.</pre>
+
+  <script>
+    const form = document.getElementById('form');
+    const out = document.getElementById('out');
+    const submit = document.getElementById('submit');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const body = new FormData(form);
+      body.append('timezone', Intl.DateTimeFormat().resolvedOptions().timeZone);
+      body.append('reference_datetime', new Date().toISOString());
+
+      submit.disabled = true;
+      out.textContent = 'Uploading and reading the flyer...';
+      try {
+        const res = await fetch('/api/upload', { method: 'POST', body });
+        out.textContent = JSON.stringify(await res.json(), null, 2);
+      } catch (err) {
+        out.textContent = 'Request failed: ' + err.message;
+      } finally {
+        submit.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
