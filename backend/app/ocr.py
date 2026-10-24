@@ -91,7 +91,7 @@ def extract_text(jpeg_bytes: bytes) -> dict:
     except OcrError:
         raise
     except errors.APIError as e:
-        log.error("Gemma API error %s after %.1fs", e.code, time.perf_counter() - started)
+        log.error("Gemma API error %s after %.1fs: %s", e.code, time.perf_counter() - started, str(e)[:500])
         raise OcrError("GEMMA_ERROR", f"The model request failed ({e.code}). Try again.", 502) from e
     except httpx.TimeoutException as e:
         log.error("Gemma call timed out after %.1fs", time.perf_counter() - started)

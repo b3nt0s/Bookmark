@@ -1,4 +1,5 @@
 import io
+import logging
 
 import pillow_heif
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -7,6 +8,8 @@ from .config import ALLOWED_FORMATS, MAX_IMAGE_SIDE
 from .errors import BadRequest
 
 pillow_heif.register_heif_opener()
+
+log = logging.getLogger("bookmark")
 
 
 def prepare_image(data: bytes) -> bytes:
@@ -22,6 +25,7 @@ def prepare_image(data: bytes) -> bytes:
                 "UNSUPPORTED_FORMAT",
                 f"Unsupported image type ({img.format}). Use jpg, png, webp, or heic.",
             )
+        fmt, size, mode = img.format, img.size, img.mode
         img = ImageOps.exif_transpose(img)  # phone photos store rotation in EXIF
         if img.mode in ("RGBA", "LA", "P"):
             rgba = img.convert("RGBA")  # flatten transparency onto white
@@ -32,6 +36,7 @@ def prepare_image(data: bytes) -> bytes:
         img.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))  # only shrinks, keeps aspect ratio
         out = io.BytesIO()
         img.save(out, "JPEG", quality=90)
+        log.info("image %s %s %dx%d -> JPEG %dx%d", fmt, mode, size[0], size[1], img.size[0], img.size[1])
         return out.getvalue()
     except BadRequest:
         raise
