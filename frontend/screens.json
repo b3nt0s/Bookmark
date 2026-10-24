@@ -1,0 +1,18 @@
+[
+  {
+    "slug": "01-bookmark-sign-in-with-google",
+    "title": "Bookmark - Sign in with Google"
+  },
+  {
+    "slug": "02-upload-or-snap-flyer-bookmark",
+    "title": "Upload or Snap Flyer - Bookmark"
+  },
+  {
+    "slug": "03-review-confirm-event-bookmark",
+    "title": "Review & Confirm Event - Bookmark"
+  },
+  {
+    "slug": "04-event-synced-google-calendar",
+    "title": "Event Synced - Google Calendar"
+  }
+]
