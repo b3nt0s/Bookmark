@@ -1,6 +1,9 @@
 import base64
+import hashlib
+import hmac
 import json
 import secrets
+import ssl
 import time
 import urllib.parse
 import urllib.request
@@ -8,17 +11,22 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import certifi
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import (
+    AFTER_LOGIN_PATH,
     ALLOWED_ORIGINS,
     GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET,
     GOOGLE_REDIRECT_URI,
     MAX_UPLOAD_BYTES,
+    SESSION_SECRET,
+    SITE_DIR,
 )
 from .errors import AppError, BadRequest
 from .images import prepare_image
@@ -76,6 +84,53 @@ def _decode_jwt_payload(token: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8"))
 
 
+# python.org builds of Python on macOS don't use the system certificates, so calls to
+# Google fail with CERTIFICATE_VERIFY_FAILED unless we bring our own.
+HTTPS_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+
+SESSION_COOKIE = "bookmark_session"
+SESSION_MAX_AGE_S = 7 * 24 * 3600
+
+
+def _sign(data: str) -> str:
+    return hmac.new(SESSION_SECRET.encode(), data.encode(), hashlib.sha256).hexdigest()
+
+
+def make_session(user: dict) -> str:
+    """Cookie value: the user as base64 JSON plus an HMAC, so the browser can't edit it."""
+    body = base64.urlsafe_b64encode(json.dumps({**user, "exp": int(time.time()) + SESSION_MAX_AGE_S}).encode()).decode()
+    return f"{body}.{_sign(body)}"
+
+
+def read_session(request: Request) -> dict | None:
+    value = request.cookies.get(SESSION_COOKIE, "")
+    body, _, signature = value.rpartition(".")
+    if not body or not hmac.compare_digest(signature, _sign(body)):
+        return None
+    try:
+        user = json.loads(base64.urlsafe_b64decode(body.encode()))
+    except ValueError:
+        return None
+    if user.pop("exp", 0) < time.time():
+        return None
+    return user
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request):
+    user = read_session(request)
+    if not user:
+        raise AppError("NOT_SIGNED_IN", "Sign in with Google first.", 401)
+    return {"authenticated": True, "user": user}
+
+
+@app.post("/api/auth/logout")
+def auth_logout():
+    response = JSONResponse({"authenticated": False})
+    response.delete_cookie(SESSION_COOKIE)
+    return response
+
+
 @app.get("/api/auth/google/config")
 def google_auth_config():
     return {
@@ -86,9 +141,15 @@ def google_auth_config():
 
 
 @app.get("/api/auth/google/login")
-def google_login():
+def google_login(request: Request):
     if not GOOGLE_CLIENT_ID or not GOOGLE_REDIRECT_URI:
         raise BadRequest("GOOGLE_OAUTH_NOT_CONFIGURED", "Google OAuth is not configured in the environment.")
+
+    # Cookies are per host, so start on the same host Google will send the user back to
+    # (e.g. localhost, not 127.0.0.1); otherwise the state and session cookies get lost.
+    redirect_host = urllib.parse.urlsplit(GOOGLE_REDIRECT_URI).netloc
+    if request.url.netloc != redirect_host:
+        return RedirectResponse(f"{urllib.parse.urlsplit(GOOGLE_REDIRECT_URI).scheme}://{redirect_host}{request.url.path}")
 
     state = secrets.token_urlsafe(32)
     params = urllib.parse.urlencode(
@@ -108,6 +169,8 @@ def google_login():
 
 
 @app.get("/api/auth/google/callback")
+# GOOGLE_REDIRECT_URI may end in a slash; the static site mounted at / would 404 it otherwise.
+@app.get("/api/auth/google/callback/", include_in_schema=False)
 def google_callback(request: Request, code: str | None = None, state: str | None = None, error: str | None = None):
     if error:
         raise BadRequest("GOOGLE_AUTH_ERROR", f"Google login failed: {error}.")
@@ -115,7 +178,7 @@ def google_callback(request: Request, code: str | None = None, state: str | None
         raise BadRequest("MISSING_AUTH_CODE", "Google OAuth did not return an authorization code.")
 
     cookie_state = request.cookies.get("google_oauth_state")
-    if state and cookie_state and state != cookie_state:
+    if not state or not cookie_state or not hmac.compare_digest(state, cookie_state):
         raise BadRequest("INVALID_STATE", "The Google OAuth state value did not match the request.")
 
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not GOOGLE_REDIRECT_URI:
@@ -135,7 +198,7 @@ def google_callback(request: Request, code: str | None = None, state: str | None
         data=token_payload,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
-    with urllib.request.urlopen(token_request, timeout=15) as resp:
+    with urllib.request.urlopen(token_request, timeout=15, context=HTTPS_CONTEXT) as resp:
         token_response = json.loads(resp.read().decode("utf-8"))
 
     access_token = token_response.get("access_token")
@@ -146,20 +209,19 @@ def google_callback(request: Request, code: str | None = None, state: str | None
         "https://openidconnect.googleapis.com/v1/userinfo",
         headers={"Authorization": f"Bearer {access_token}"},
     )
-    with urllib.request.urlopen(user_request, timeout=15) as resp:
+    with urllib.request.urlopen(user_request, timeout=15, context=HTTPS_CONTEXT) as resp:
         profile = json.loads(resp.read().decode("utf-8"))
 
-    return JSONResponse(
-        {
-            "authenticated": True,
-            "user": {
-                "email": profile.get("email"),
-                "name": profile.get("name") or profile.get("email") or "Google user",
-                "picture": profile.get("picture"),
-                "googleUserId": profile.get("sub"),
-            },
-        }
-    )
+    user = {
+        "email": profile.get("email"),
+        "name": profile.get("name") or profile.get("email") or "Google user",
+        "picture": profile.get("picture"),
+        "googleUserId": profile.get("sub"),
+    }
+    response = RedirectResponse(AFTER_LOGIN_PATH, status_code=303)
+    response.set_cookie(SESSION_COOKIE, make_session(user), max_age=SESSION_MAX_AGE_S, httponly=True, samesite="lax")
+    response.delete_cookie("google_oauth_state")
+    return response
 
 
 @app.post("/api/auth/google/session")
@@ -220,6 +282,10 @@ def upload(
     return result
 
 
-@app.get("/")
+@app.get("/test")
 def test_page():
     return FileResponse(Path(__file__).parent / "static" / "index.html")
+
+
+# The Stitch screens, at /. Mounted last so the routes above take priority.
+app.mount("/", StaticFiles(directory=SITE_DIR, html=True), name="site")
