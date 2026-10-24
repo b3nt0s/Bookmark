@@ -91,3 +91,7 @@ main { animation: page-in 0.5s ease-out backwards; }
 .event-tab.active { background: #005bbf; color: #fff; border-color: #005bbf; }
 .event-tab.excluded { text-decoration: line-through; opacity: 0.6; }
 .tab-dot { width: 8px; height: 8px; border-radius: 9999px; background: #f5a524; flex: none; }
+
+.notice-error { background: #fde8e6; color: #8a1c13; }
+.notice a { text-decoration: none; }
+#add-result a:hover { opacity: 0.85; }

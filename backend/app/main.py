@@ -33,6 +33,7 @@ from .config import (
 from .errors import AppError, BadRequest
 from .images import prepare_image
 from .events import parse_events
+from .gcal import CALENDAR_SCOPE, EventIn, calendar_status, create_event, store_token
 from .ocr import extract_text
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -63,7 +64,9 @@ async def handle_app_error(request: Request, exc: AppError):
 
 @app.exception_handler(RequestValidationError)
 async def handle_validation_error(request: Request, exc: RequestValidationError):
-    return error_response(400, "BAD_REQUEST", 'Send multipart/form-data with an image in the "file" field.')
+    if request.url.path == "/api/upload":
+        return error_response(400, "BAD_REQUEST", 'Send multipart/form-data with an image in the "file" field.')
+    return error_response(400, "BAD_REQUEST", "Some event details are missing or invalid.")
 
 
 @app.exception_handler(Exception)
@@ -131,7 +134,7 @@ def auth_me(request: Request):
     user = read_session(request)
     if not user:
         raise AppError("NOT_SIGNED_IN", "Sign in with Google first.", 401)
-    return {"authenticated": True, "user": user}
+    return {"authenticated": True, "user": user, "calendar": calendar_status(user.get("googleUserId"))}
 
 
 @app.post("/api/auth/logout")
@@ -151,7 +154,7 @@ def google_auth_config():
 
 
 @app.get("/api/auth/google/login")
-def google_login(request: Request):
+def google_login(request: Request, next: str | None = None):
     if not GOOGLE_CLIENT_ID or not GOOGLE_REDIRECT_URI:
         raise BadRequest("GOOGLE_OAUTH_NOT_CONFIGURED", "Google OAuth is not configured in the environment.")
 
@@ -167,7 +170,7 @@ def google_login(request: Request):
             "client_id": GOOGLE_CLIENT_ID,
             "redirect_uri": GOOGLE_REDIRECT_URI,
             "response_type": "code",
-            "scope": "openid email profile",
+            "scope": f"openid email profile {CALENDAR_SCOPE}",
             "access_type": "online",
             "prompt": "select_account",
             "state": state,
@@ -175,6 +178,9 @@ def google_login(request: Request):
     )
     response = RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
     response.set_cookie("google_oauth_state", state, httponly=True, samesite="lax")
+    # Where to land after sign-in. Only paths on this site are allowed.
+    if next and next.startswith("/") and not next.startswith("//"):
+        response.set_cookie("google_oauth_next", next, httponly=True, samesite="lax", max_age=600)
     return response
 
 
@@ -228,9 +234,15 @@ def google_callback(request: Request, code: str | None = None, state: str | None
         "picture": profile.get("picture"),
         "googleUserId": profile.get("sub"),
     }
-    response = RedirectResponse(AFTER_LOGIN_PATH, status_code=303)
+    if user["googleUserId"]:
+        store_token(user["googleUserId"], token_response)
+    after = request.cookies.get("google_oauth_next", "")
+    if not after.startswith("/") or after.startswith("//"):
+        after = AFTER_LOGIN_PATH
+    response = RedirectResponse(after, status_code=303)
     response.set_cookie(SESSION_COOKIE, make_session(user), max_age=SESSION_MAX_AGE_S, httponly=True, samesite="lax")
     response.delete_cookie("google_oauth_state")
+    response.delete_cookie("google_oauth_next")
     return response
 
 
@@ -308,6 +320,17 @@ def upload(
         return result
     finally:
         log.info("upload %s: received %.0fKB, total %.1fs", outcome, size / 1024, time.perf_counter() - started)
+
+
+@app.post("/api/events")
+def add_event(event: EventIn, request: Request):
+    """Create the confirmed event on the signed-in user's primary Google Calendar."""
+    user = read_session(request)
+    if not user or not user.get("googleUserId"):
+        raise AppError("NOT_SIGNED_IN", "Sign in with Google first.", 401)
+    created = create_event(user["googleUserId"], event)
+    log.info("event created for %s", user.get("email"))
+    return created
 
 
 @app.get("/test")

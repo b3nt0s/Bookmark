@@ -29,7 +29,7 @@ const store = {
     try { sessionStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; }
   },
   clear() {
-    for (const key of ["flyer", "event", "events", "reviewState"]) sessionStorage.removeItem(key);
+    for (const key of ["flyer", "event", "events", "reviewState", "created"]) sessionStorage.removeItem(key);
   },
 };
 
@@ -463,11 +463,13 @@ function setUpReviewPage() {
     store.set("reviewState", { events: states, active });
     store.set("events", chosen.map(({ warn, include, ...ev }) => ev));
     store.set("event", { ...chosen[0], warn: undefined, include: undefined });
-    const btn = document.getElementById("submit-sync-btn");
-    btn.disabled = true;
-    btn.querySelector("span:last-child").textContent = "Syncing with Google Calendar...";
-    setTimeout(() => go(PAGES.synced), 900);
+    sessionStorage.removeItem("created"); // edited details need adding again
+    go(PAGES.synced);
   });
+
+  const confirmBtn = document.getElementById("submit-sync-btn");
+  confirmBtn.querySelector("span:last-child").textContent = "Confirm details";
+  confirmBtn.querySelector(".material-symbols-outlined").textContent = "check";
 
   showNotice();
   fillForm();
@@ -548,37 +550,162 @@ function googleCalendarUrl(ev) {
   return "https://calendar.google.com/calendar/render?" + params;
 }
 
+// Page 04 is where the events actually get added to Google Calendar.
+const SIGN_IN_AGAIN = new Set(["NOT_SIGNED_IN", "CALENDAR_NOT_CONNECTED", "TOKEN_EXPIRED", "CALENDAR_PERMISSION_MISSING"]);
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+}
+
+function replaceText(from, to) {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.nodeValue.includes(from)) node.nodeValue = node.nodeValue.replace(from, to);
+  }
+}
+
+// Asks the backend to create one event on the user's primary calendar. Resolves to { link } or { error, code }.
+async function createCalendarEvent(ev) {
+  const body = {
+    title: ev.title, all_day: ev.allDay,
+    start_date: ev.startDate, start_time: ev.startTime || null,
+    end_date: ev.endDate || null, end_time: ev.endTime || null,
+    location: ev.location, description: ev.description, reminder: ev.reminder,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+  try {
+    const res = await fetch(`${API_BASE}/api/events`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data.error?.message || `Couldn't add the event (${res.status}).`, code: data.error?.code };
+    return { link: data.htmlLink };
+  } catch {
+    return { error: "Couldn't reach the server. Check your connection and try again." };
+  }
+}
+
 function setUpSyncedPage() {
-  const ev = store.get("event");
+  const events = store.get("events");
+  if (!events?.length) return go(PAGES.upload); // nothing to add yet
+  const ev = events[0];
 
   byText("Convert Another Flyer", "a")?.addEventListener("click", () => store.clear());
-  if (ev) {
-    const [dates, times] = describeWhen(ev);
-    const [venue, ...rest] = ev.location.split(",");
-    const extra = (store.get("events")?.length || 1) - 1;
-    document.getElementById("synced-title").textContent = ev.title + (extra ? ` (+${extra} more in the .ics file)` : "");
-    document.getElementById("synced-dates").textContent = dates;
-    document.getElementById("synced-times").textContent = times;
-    document.getElementById("synced-venue").textContent = venue || "No location";
-    document.getElementById("synced-address").textContent = rest.join(",").trim();
 
-    // Testing phase: nothing was really synced, so this opens a prefilled Google Calendar event instead.
-    const open = byText("Open in Google Calendar", "a");
-    if (open) open.href = googleCalendarUrl(ev);
+  // ----- Summary card: the first event, plus a list when there are more
+  const [dates, times] = describeWhen(ev);
+  const [venue, ...rest] = ev.location.split(",");
+  document.getElementById("synced-title").textContent = ev.title;
+  document.getElementById("synced-dates").textContent = dates;
+  document.getElementById("synced-times").textContent = times;
+  document.getElementById("synced-venue").textContent = venue || "No location";
+  document.getElementById("synced-address").textContent = rest.join(",").trim();
+  if (events.length > 1) {
+    const list = el("ul", "mt-space-md pt-space-md border-t border-surface-container-high text-left font-body-sm text-body-sm text-on-surface-variant flex flex-col gap-1");
+    list.append(el("li", "font-label-mono text-label-mono uppercase", `Also adding ${events.length - 1} more`));
+    events.slice(1).forEach((e) => list.append(el("li", "", `${e.title}: ${describeWhen(e).join(", ")}`)));
+    document.getElementById("synced-title").closest("div").append(list);
   }
 
-  const event = ev ?? {
-    title: document.getElementById("synced-title").textContent.trim(),
-    allDay: false, startDate: "2025-05-14", startTime: "09:00", endDate: "2025-05-15", endTime: "17:00",
-    location: "Metropolitan Convention Hall, 450 Market St, San Francisco, CA 94105", description: "", reminder: "1h",
+  // ----- Page text that depends on whether the events were added yet
+  const headline = document.querySelector("main h1");
+  const subline = headline.nextElementSibling;
+  replaceText("Synced to", "Signed in as");
+  const many = events.length > 1;
+  const setState = (added) => {
+    headline.textContent = added
+      ? (many ? `${events.length} events added to your Google Calendar!` : "Event added to your Google Calendar!")
+      : (many ? "Ready to add these events to your Google Calendar" : "Ready to add this event to your Google Calendar");
+    subline.textContent = added
+      ? "They are on your primary calendar now."
+      : "Check the details below, then add it with one click.";
+    const tag = added ? "ADDED" : "READY TO ADD";
+    for (const from of ["CALENDAR CONFIRMED", "READY TO ADD", "ADDED"]) if (from !== tag) replaceText(from, tag);
   };
 
+  // ----- The Add button
+  const addBtn = byText("Open in Google Calendar", "a");
+  const addLabel = addBtn.querySelector("span:last-child");
+  const addIcon = addBtn.querySelector(".material-symbols-outlined");
+  addBtn.removeAttribute("target");
+  addBtn.href = "#";
+  const result = el("div", "w-full flex flex-col gap-space-sm text-left mt-space-md");
+  addBtn.parentElement.after(result);
+
+  const created = store.get("created") || {}; // index -> link, for events already added
+  const label = (text, icon) => { addLabel.textContent = text; addIcon.textContent = icon; };
+  const disable = (on) => {
+    addBtn.classList.toggle("pointer-events-none", on);
+    addBtn.classList.toggle("opacity-60", on);
+    addBtn.setAttribute("aria-disabled", String(on));
+  };
+
+  function showResults(failures) {
+    result.replaceChildren();
+    events.forEach((e, i) => {
+      if (!created[i]) return;
+      const a = el("a", "notice notice-ok flex items-center justify-between gap-space-sm", "");
+      a.href = created[i]; a.target = "_blank"; a.rel = "noopener noreferrer";
+      a.append(el("span", "", `Added: ${e.title}`), el("span", "font-semibold underline", "Open in Google Calendar"));
+      result.append(a);
+    });
+    for (const { i, error, code } of failures) {
+      const box = el("div", "notice notice-error flex flex-col gap-1");
+      box.append(el("span", "font-semibold", events.length > 1 ? `Couldn't add “${events[i].title}”` : "Couldn't add the event"), el("span", "", error));
+      const links = el("div", "flex flex-wrap gap-space-md font-semibold");
+      if (SIGN_IN_AGAIN.has(code)) {
+        const signIn = el("a", "underline", "Sign in again");
+        signIn.href = `${API_BASE}/api/auth/google/login?next=${encodeURIComponent(PAGES.synced)}`;
+        links.append(signIn);
+      }
+      const fallback = el("a", "underline", "Open a pre-filled Google Calendar page instead");
+      fallback.href = googleCalendarUrl(events[i]); fallback.target = "_blank"; fallback.rel = "noopener noreferrer";
+      links.append(fallback);
+      box.append(links);
+      result.append(box);
+    }
+  }
+
+  const allAdded = () => events.every((_, i) => created[i]);
+  if (allAdded()) { // coming back to this page after adding
+    setState(true); label("Added to Google Calendar", "check_circle"); disable(true); showResults([]);
+  } else {
+    setState(false); label("Add to Google Calendar", "event_available"); showResults([]);
+  }
+
+  let busy = false;
+  addBtn.addEventListener("click", async (e) => {
+    e.preventDefault();
+    if (busy || allAdded()) return; // no double adds
+    busy = true; disable(true); label("Adding to Google Calendar...", "sync");
+    addIcon.classList.add("animate-spin");
+    const failures = [];
+    for (let i = 0; i < events.length; i++) {
+      if (created[i]) continue;
+      const out = await createCalendarEvent(events[i]);
+      if (out.link) created[i] = out.link; else failures.push({ i, ...out });
+    }
+    store.set("created", created);
+    addIcon.classList.remove("animate-spin");
+    showResults(failures);
+    busy = false;
+    if (allAdded()) {
+      setState(true); label("Added to Google Calendar", "check_circle"); // stays disabled
+    } else {
+      disable(false); label("Try again", "refresh");
+    }
+  });
+
+  // ----- Download / share
   document.getElementById("quickDownloadIcs")?.addEventListener("click", (e) => {
     e.preventDefault();
-    const url = URL.createObjectURL(new Blob([buildIcs(store.get("events") ?? [event])], { type: "text/calendar" }));
+    const url = URL.createObjectURL(new Blob([buildIcs(events)], { type: "text/calendar" }));
     const a = Object.assign(document.createElement("a"), {
       href: url,
-      download: (event.title || "event").replace(/[^\w-]+/g, "-").replace(/^-|-$/g, "").toLowerCase() + ".ics",
+      download: (ev.title || "event").replace(/[^\w-]+/g, "-").replace(/^-|-$/g, "").toLowerCase() + ".ics",
     });
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -587,20 +714,19 @@ function setUpSyncedPage() {
   const share = document.getElementById("quickShareInvite");
   share?.addEventListener("click", async (e) => {
     e.preventDefault();
-    const [dates, times] = describeWhen(event);
-    const text = `${event.title}\n${dates}, ${times}\n${event.location}`;
+    const text = events.map((x) => `${x.title}\n${describeWhen(x).join(", ")}\n${x.location}`).join("\n\n");
     if (navigator.share) {
-      try { await navigator.share({ title: event.title, text }); } catch { /* user cancelled */ }
+      try { await navigator.share({ title: ev.title, text }); } catch { /* user cancelled */ }
       return;
     }
-    const label = share.querySelector("span:last-child");
+    const shareLabel = share.querySelector("span:last-child");
     try {
       await navigator.clipboard.writeText(text);
-      label.textContent = "Copied to clipboard";
+      shareLabel.textContent = "Copied to clipboard";
     } catch {
-      label.textContent = "Couldn't copy";
+      shareLabel.textContent = "Couldn't copy";
     }
-    setTimeout(() => (label.textContent = "Share invite"), 2000);
+    setTimeout(() => (shareLabel.textContent = "Share invite"), 2000);
   });
 }
 
