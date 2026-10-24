@@ -20,7 +20,8 @@ def local_ip() -> str:
 
 
 if __name__ == "__main__":
-    print(f"\nOn this computer:  http://127.0.0.1:{PORT}")
-    print(f"On your phone:     http://{local_ip()}:{PORT}   (same Wi-Fi)")
-    print(f"Upload test page:  http://127.0.0.1:{PORT}/test\n")
+    # localhost, not 127.0.0.1: Google sign-in only returns to the host in GOOGLE_REDIRECT_URI.
+    print(f"\nOn this computer:  http://localhost:{PORT}")
+    print(f"On your phone:     http://{local_ip()}:{PORT}   (same Wi-Fi; Google sign-in won't work here)")
+    print(f"Upload test page:  http://localhost:{PORT}/test\n")
     uvicorn.run("app.main:app", host="0.0.0.0", port=PORT)

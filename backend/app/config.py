@@ -1,4 +1,5 @@
 import os
+import secrets
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -19,6 +20,13 @@ def _first_env(*keys: str) -> str | None:
 GOOGLE_CLIENT_ID = _first_env("GOOGLE_CLIENT_ID", "Google_Client_ID")
 GOOGLE_CLIENT_SECRET = _first_env("GOOGLE_CLIENT_SECRET", "Google_Client_Secret")
 GOOGLE_REDIRECT_URI = _first_env("GOOGLE_REDIRECT_URI", "Google_Redirect_URI", "Google_Redirect_Uri")
+
+# Signs the sign-in cookie. Without one in .env, a random key is used and everyone
+# is signed out whenever the server restarts.
+SESSION_SECRET = os.getenv("SESSION_SECRET") or secrets.token_hex(32)
+
+# Where Google sign-in sends the user once it succeeds.
+AFTER_LOGIN_PATH = "/screens/02-upload-or-snap-flyer-bookmark.html"
 
 # Switch to "gemma-4-31b-it" here if the 26B model isn't accurate enough.
 MODEL = "gemma-4-26b-a4b-it"

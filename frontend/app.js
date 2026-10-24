@@ -1,6 +1,6 @@
-// Testing-phase glue for the Stitch screens: page links, the uploaded flyer, and the event
-// the user confirms. No real Google sign-in, OCR, or Calendar calls yet; state lives in
-// sessionStorage so it resets when the tab closes.
+// Testing-phase glue for the Stitch screens: Google sign-in, page links, the uploaded flyer,
+// and the event the user confirms. No real OCR or Calendar calls yet; flyer and event state
+// lives in sessionStorage so it resets when the tab closes.
 
 const PAGES = {
   signIn: "/",
@@ -37,6 +37,51 @@ function go(url) {
 // Finds the innermost clickable element whose text includes `text`.
 function byText(text, selector = "button, a") {
   return [...document.querySelectorAll(selector)].find((el) => el.textContent.includes(text));
+}
+
+// ---------- Account ----------
+
+// The Stitch screens show a placeholder account; this is it.
+const PLACEHOLDER_EMAIL = "alex.doe@gmail.com";
+
+function showAccount(user) {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.nodeValue.includes(PLACEHOLDER_EMAIL)) {
+      node.nodeValue = node.nodeValue.replaceAll(PLACEHOLDER_EMAIL, user.email);
+    }
+  }
+
+  const avatar = document.querySelector('img[alt="Profile"]');
+  if (!avatar) return;
+  if (user.picture) {
+    avatar.src = user.picture;
+    avatar.referrerPolicy = "no-referrer"; // Google profile photos refuse some referrers
+  }
+  avatar.alt = user.name;
+  avatar.title = `${user.name} (${user.email})`;
+
+  const signOut = document.createElement("button");
+  signOut.type = "button";
+  signOut.textContent = "Sign out";
+  signOut.className = "ml-3 px-3 py-1.5 rounded-full border border-outline-variant/60 text-on-surface-variant hover:text-on-surface hover:bg-surface-container font-label-md text-label-md";
+  signOut.addEventListener("click", async () => {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    store.clear();
+    go(PAGES.signIn);
+  });
+  avatar.closest("a").after(signOut);
+}
+
+// Every page after sign-in needs a Google account; without one, back to the start.
+async function requireAccount() {
+  try {
+    const res = await fetch("/api/auth/me");
+    if (res.status === 401) return go(PAGES.signIn);
+    if (res.ok) showAccount((await res.json()).user);
+  } catch {
+    // Backend unreachable: leave the placeholder account so the screens still work.
+  }
 }
 
 function wireNav() {
@@ -289,7 +334,6 @@ function setUpSyncedPage() {
   const ev = store.get("event");
 
   byText("Convert Another Flyer", "a")?.addEventListener("click", () => store.clear());
-
   if (ev) {
     const [dates, times] = describeWhen(ev);
     const [venue, ...rest] = ev.location.split(",");
@@ -344,6 +388,7 @@ function setUpSyncedPage() {
 // ---------- Start ----------
 
 wireNav();
+requireAccount();
 const page = document.body.dataset.page;
 if (page === "upload") setUpUploadPage();
 if (page === "review") setUpReviewPage();
